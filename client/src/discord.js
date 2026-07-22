@@ -144,13 +144,14 @@ async function boot() {
     await sdk.ready()
     ctx.guildId = sdk.guildId || null
 
-    // Identity, so scores belong to a real Discord account.
+    // Identity only — we never need the user's server list, so we don't ask
+    // for the `guilds` scope. `sdk.guildId` already tells us where we launched.
     const { code } = await sdk.commands.authorize({
       client_id: CLIENT_ID,
       response_type: 'code',
       state: '',
       prompt: 'none',
-      scope: ['identify', 'guilds']
+      scope: ['identify']
     })
 
     const res = await fetch(api('/api/token'), {

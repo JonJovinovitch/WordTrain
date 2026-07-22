@@ -132,6 +132,11 @@ app.get('/api/leaderboard', async (req, res) => {
 app.get('/api/health', (_req, res) =>
   res.json({ ok: true, store: usingPostgres ? 'postgres' : 'file', configured: Boolean(CLIENT_ID && CLIENT_SECRET) }))
 
+/* ---------- legal pages (linked from the Discord Developer Portal) ---------- */
+const LEGAL_DIR = path.join(__dirname, '..', 'legal')
+app.get(['/terms', '/terms.html'], (_req, res) => res.sendFile(path.join(LEGAL_DIR, 'terms.html')))
+app.get(['/privacy', '/privacy.html'], (_req, res) => res.sendFile(path.join(LEGAL_DIR, 'privacy.html')))
+
 /* ---------- the game itself ---------- */
 app.use(express.static(PUBLIC_DIR))
 app.get('*', (_req, res) => res.sendFile(path.join(PUBLIC_DIR, 'index.html')))
