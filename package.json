@@ -14,11 +14,9 @@
     "dev:server": "node server/index.js"
   },
   "dependencies": {
-    "express": "^4.21.1",
-    "pg": "^8.13.1"
-  },
-  "devDependencies": {
     "@discord/embedded-app-sdk": "^2.5.0",
+    "express": "^4.21.1",
+    "pg": "^8.13.1",
     "vite": "^5.4.10"
   }
 }
