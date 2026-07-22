@@ -1,5 +1,7 @@
 node_modules/
-public/
+# build output only — the leading slash keeps this from also matching
+# client/public/, which holds real source assets like the theme mp3
+/public/
 .env
 .local-scores.json
 *.log
