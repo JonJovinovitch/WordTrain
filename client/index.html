@@ -433,6 +433,19 @@ function ensureConnected(sx,sy){
 // ═══════════════════════════════════════════════════
 // MAP DEFINITIONS
 // ═══════════════════════════════════════════════════
+// ═══ SECRET LEVEL — geometry & tuning ═══════════════
+const SEC_W=144,SEC_H=256;                       // 144/256 = exactly 9:16
+const SEC_X1=(GW-SEC_W)>>1,SEC_X2=SEC_X1+SEC_W-1;
+const SEC_Y2=GH-3,SEC_Y1=SEC_Y2-SEC_H+1;
+const SEC_GATES=(function(){
+  const n=8,span=Math.floor(SEC_H/(n+1)),out=[];let need=300;
+  for(let i=1;i<=n;i++){out.push({y:SEC_Y2-i*span,need:Math.round(need)});need*=1.5;}
+  return out;                                    // 300,450,675,1013,1519,2278,3417,5126
+})();
+const SEC_GRACE=10;      // seconds before the floor starts falling
+const SEC_RISE0=0.020;   // rows per tick at the start
+const SEC_ACCEL=0.0009;  // extra rows/tick per second survived
+
 const MAPS=[
   {
     id:0, icon:'🍄', name:'MAGIC MUSHROOM', sub:'Mushroom-shaped arena with a secret bonus zone',
@@ -695,6 +708,21 @@ const MAPS=[
       fr(284,208,380,256,2);
       ensureConnected(200,128);
     }
+  },
+  {
+    id:5, icon:'💀', name:'SECRET LEVEL - DO NOT ENTER',
+    sub:'A 9:16 shaft. The floor is falling. Spell your way up.',
+    secret:true,
+    theme:{floor:'#0a0305',wall:'#3a0a12',wallB:'#220509',haz:'#ff0033',hazG:'#ff3355',
+           grid:'#160408',border:'#8a0f22',walltop:'#5a1020'},
+    start:[200,SEC_Y2-6],
+    build(){
+      MGRID.fill(1);
+      fr(SEC_X1,SEC_Y1,SEC_X2,SEC_Y2,0);                 // the shaft
+      SEC_GATES.forEach(g=>fr(SEC_X1,g.y,SEC_X2,g.y+2,1)); // sealed zone gates
+      // NOTE: deliberately no ensureConnected() — it would wall off every
+      // zone above the first sealed gate, erasing the level.
+    }
   }
 ];
 
@@ -784,8 +812,21 @@ function schedM(){
   }
   setTimeout(schedM,75);
 }
-function startMusic(){initAC();if(!mSched){nxtT=AC.currentTime+.1;mI=0;bI=0;mSched=true;schedM();}if(MG)MG.gain.value=.26;}
-function stopMusic(){if(MG)MG.gain.value=0;}
+// Secret level plays a real track instead of the synth chiptune.
+const SECAUD=new Audio('./secret-theme.mp3');SECAUD.loop=true;SECAUD.volume=.55;
+function isSecretMap(){return typeof G!=='undefined'&&G&&G.map&&G.map.secret;}
+function startMusic(mapId){
+  const _m=(mapId===undefined)?null:(MAPS.find(x=>x.id===mapId)||MAPS[mapId]);
+  if(_m?!!_m.secret:isSecretMap()){
+    if(MG)MG.gain.value=0;                      // silence the chiptune
+    if(musicOn){try{SECAUD.currentTime=0;SECAUD.play().catch(()=>{});}catch(e){}}
+    return;
+  }
+  try{SECAUD.pause();}catch(e){}
+  initAC();if(!mSched){nxtT=AC.currentTime+.1;mI=0;bI=0;mSched=true;schedM();}
+  if(MG)MG.gain.value=musicOn?.26:0;
+}
+function stopMusic(){if(MG)MG.gain.value=0;try{SECAUD.pause();}catch(e){}}
 function togMusic(){musicOn=!musicOn;document.getElementById('bmus').textContent=`🔊 MUSIC: ${musicOn?'ON':'OFF'}`;if(musicOn)startMusic();else stopMusic();}
 
 // ═══════════════════════════════════════════════════
@@ -1062,9 +1103,33 @@ function getMaxL(){return Math.min(160+G.minutes*40+Math.floor(G.score/10),600)+
 // Spawn interval
 function getSI(){return Math.max(6,40-G.minutes*4-Math.floor(G.score/80));}
 
+// ═══ SECRET LEVEL — rising pit + score-gated zones ═══
+function secretUpdate(){
+  if(G.pit===undefined){G.pit=SEC_Y2+1;G.pitAcc=0;G.gateOpen=SEC_GATES.map(()=>false);}
+  // unlock the next zone once you have the points
+  for(let i=0;i<SEC_GATES.length;i++){
+    if(!G.gateOpen[i]&&G.score>=SEC_GATES[i].need){
+      G.gateOpen[i]=true;
+      fr(SEC_X1,SEC_GATES[i].y,SEC_X2,SEC_GATES[i].y+2,0);
+      flash('ZONE '+(i+1)+' OPEN — CLIMB!','#ff3355');
+    }
+  }
+  // the floor falls away, faster the longer you last
+  if(G.seconds>=SEC_GRACE&&G.pit>SEC_Y1+2){
+    G.pitAcc+=SEC_RISE0+(G.seconds-SEC_GRACE)*SEC_ACCEL;
+    while(G.pitAcc>=1){
+      G.pitAcc-=1;
+      if(G.pit>SEC_Y1+2){G.pit--;fr(SEC_X1,G.pit,SEC_X2,G.pit,2);}
+    }
+  }
+  const h=G.snake&&G.snake[0];
+  if(h&&h.y>=G.pit)trigGO('SWALLOWED BY THE PIT');
+}
+
 function update(){
   if(!G||G.dead)return;
   G.tick++;G.frames++;
+  if(G.map&&G.map.secret)secretUpdate();
 
   // Timer — flash on every tier change (every 30s or score threshold)
   if(G.frames%UPS===0){
@@ -1801,7 +1866,7 @@ function startGame(mapId){
   loadEl.style.opacity='1';
   loadEl.classList.add('active');
   document.querySelectorAll('.screen').forEach(s=>{if(s!==loadEl)s.classList.remove('active');});
-  startMusic();
+  startMusic(mapId);
   setTimeout(()=>{
     initGame(mapId);
     loadEl.style.transition='opacity .3s';
