@@ -7,7 +7,7 @@
 <style>
 *{margin:0;padding:0;box-sizing:border-box}
 body{background:#060d06;overflow:hidden;font-family:'Courier New',monospace;color:#fff;touch-action:none}
-canvas{display:block;position:fixed;top:0;left:0}
+canvas{display:block;position:fixed;top:0;left:0;width:100%;height:100%}
 
 /* ── SCREENS ─────────────────────────────────── */
 .screen{position:fixed;inset:0;display:none;flex-direction:column;align-items:center;justify-content:center;z-index:20;pointer-events:all}
@@ -407,10 +407,22 @@ const CELL=28, GW=400, BASE_GH=260, SECRET_GRID_H=2560, BW=GW*CELL;
 let GH=BASE_GH, BH=GH*CELL;
 const MMX=8,MMY=58;
 // Minimap size: 80% smaller on mobile (touch/narrow screen)
-function isMobile(){return VW<700||window.matchMedia('(pointer:coarse)').matches;}
+// Read the window, not VW: on mobile VW is now the zoomed-out backing-store
+// width, which is deliberately larger than the screen.
+function isMobile(){return window.innerWidth<700||window.matchMedia('(pointer:coarse)').matches;}
 function mmSize(){return isMobile()?{mw:72,mh:47}:{mw:360,mh:234};}
-let VW,VH;
-function resize(){VW=C.width=window.innerWidth;VH=C.height=window.innerHeight;}
+// MOBILE ZOOM-OUT. The canvas gets a backing store VZ x larger than the
+// screen and CSS squeezes it back down, so VZ=2 fits twice the world in each
+// direction - 4x the area, i.e. ~300% more map visible than before. Nothing
+// else in the game has to know: VW/VH stay "how much world fits on screen".
+const MOBILE_VZ=2;
+function viewZoom(){return isMobile()?MOBILE_VZ:1;}
+let VW,VH,VZ=1;
+function resize(){
+  VZ=viewZoom();
+  VW=C.width=Math.round(window.innerWidth*VZ);
+  VH=C.height=Math.round(window.innerHeight*VZ);
+}
 window.addEventListener('resize',resize);resize();
 
 // ═══════════════════════════════════════════════════
@@ -464,6 +476,12 @@ const SEC_GATES=(function(){
 const SEC_GRACE=120;     // 2 full minutes before the floor starts falling
 const SEC_RISE0=0.0075;  // rows per tick at the start (another 25% slower)
 const SEC_ACCEL=0.0003375;// extra rows/tick per second survived (another 25% slower)
+// Letters spawn in a band that travels with the train. The shaft is
+// 144 x 2560 (~369k cells) - scattering letters across all of it put ~97% of
+// them where nobody will ever be, so the band is what the letter cap is
+// actually sized against. Biased upward: up is the way out.
+const SEC_BAND_UP=140, SEC_BAND_DOWN=50;
+const SEC_BAND_CELLS=SEC_W*(SEC_BAND_UP+SEC_BAND_DOWN);
 
 const MAPS=[
   {
@@ -852,15 +870,15 @@ function togMusic(){musicOn=!musicOn;document.getElementById('bmus').textContent
 // MATRIX RAIN
 // ═══════════════════════════════════════════════════
 const rain=[];
-function initRain(){rain.length=0;for(let i=0;i<Math.ceil(VW/18);i++)rain.push({x:i*18,y:Math.random()*VH,spd:.4+Math.random()*1.4});}
+function initRain(){const g=18*VZ;rain.length=0;for(let i=0;i<Math.ceil(VW/g);i++)rain.push({x:i*g,y:Math.random()*VH,spd:.4+Math.random()*1.4});}
 window.addEventListener('resize',initRain);initRain();
 function drawRain(){
   X.fillStyle='rgba(6,13,6,.17)';X.fillRect(0,0,VW,VH);
-  X.font='13px Courier New';
+  X.font=(13*VZ)+'px Courier New';
   rain.forEach(r=>{
     X.fillStyle=`rgba(0,${70+Math.random()*85},0,${.22+Math.random()*0.32})`;
     X.fillText(String.fromCharCode(65+Math.floor(Math.random()*26)),r.x,r.y);
-    r.y+=r.spd*2.2;if(r.y>VH){r.y=-16;r.spd=.4+Math.random()*1.4;}
+    r.y+=r.spd*2.2*VZ;if(r.y>VH){r.y=-16*VZ;r.spd=.4+Math.random()*1.4;}
   });
 }
 
@@ -1091,7 +1109,15 @@ function spawnLet(forceDel){
   let cell=null;
   for(let tries=0;tries<80;tries++){
     const x=G.map.secret?SEC_X1+Math.floor(Math.random()*SEC_W):Math.floor(Math.random()*GW);
-    const y=Math.floor(Math.random()*GH);
+    let y;
+    if(G.map.secret){
+      // Band around the train, clamped to the shaft and never below the pit.
+      const hy=G.snake[0].y;
+      const lo=Math.max(SEC_Y1,hy-SEC_BAND_UP);
+      const hi=Math.min(G.pit!==undefined?G.pit-1:SEC_Y2,hy+SEC_BAND_DOWN);
+      if(hi<lo)continue;
+      y=lo+Math.floor(Math.random()*(hi-lo+1));
+    } else y=Math.floor(Math.random()*GH);
     if(gc(x,y)===0&&!snkSet.has(`${x},${y}`)&&!letSet.has(`${x},${y}`)){cell={x,y};break;}
   }
   if(!cell)return;
@@ -1136,7 +1162,16 @@ function getSpd(){
 }
 function moveInterp(){return Math.min(1,(G.mtick+frameAlpha)/getSpd());}
 // Letters: +25% — starts at 160, scales to 600
-function getMaxL(){return Math.min(160+G.minutes*40+Math.floor(G.score/10),600)+(G.bonusActive?300:0);}
+function getMaxL(){
+  const base=Math.min(160+G.minutes*40+Math.floor(G.score/10),600);
+  // SECRET LEVEL: 3x the letter density of a normal map ("200% more"). The
+  // cap is derived from the spawn band rather than the whole shaft - one
+  // letter per ~29 cells at full ramp, against roughly one per ~87 elsewhere.
+  const cap=(G.map&&G.map.secret)
+    ? Math.round(base/600*SEC_BAND_CELLS/29)
+    : base;
+  return cap+(G.bonusActive?300:0);
+}
 // Spawn interval
 function getSI(){return Math.max(6,40-G.minutes*4-Math.floor(G.score/80));}
 
@@ -1159,6 +1194,9 @@ function secretUpdate(){
       if(G.pit>SEC_Y1+2){G.pit--;fr(SEC_X1,G.pit,SEC_X2,G.pit,2);}
     }
   }
+  // Letters below the pit are unreachable - drop them so the (much larger)
+  // letter budget gets spent where the train can actually get to.
+  if(G.tick%30===0)G.lets=G.lets.filter(l=>l.y<G.pit);
   const h=G.snake&&G.snake[0];
   if(h&&h.y>=G.pit)trigGO('SWALLOWED BY THE PIT');
 }
@@ -1198,7 +1236,13 @@ function update(){
 
   // Spawn
   G.stimer++;
-  if(G.stimer>=getSI()){G.stimer=0;if(G.lets.length<getMaxL())spawnLet();}
+  if(G.stimer>=getSI()){
+    G.stimer=0;
+    // The secret level's cap is several times higher, so one letter per
+    // interval would take minutes to fill the shaft. Spawn a batch there.
+    const n=G.map.secret?8:1, cap=getMaxL();
+    for(let i=0;i<n&&G.lets.length<cap;i++)spawnLet();
+  }
 
   // Age letters
   G.lets=G.lets.filter(l=>{l.age++;return l.age<l.maxAge;});
@@ -1734,6 +1778,9 @@ function rRect(x,y,w,h,r){
 // ── MINI-MAP ────────────────────────────────────────
 function drawMM(){
   if(cur!=='game'||!G.map)return;
+  // The minimap is drawn in screen units and scaled by VZ so it keeps its
+  // real on-screen size - and legible labels - while the world zooms out.
+  X.save();X.scale(VZ,VZ);
   const{mw,mh}=mmSize(),mx=MMX,my=MMY,sx=mw/BW,sy=mh/BH;
   // Background
   X.fillStyle='rgba(2,7,2,.9)';X.strokeStyle='#1a4a1a';X.lineWidth=1.5;
@@ -1762,7 +1809,9 @@ function drawMM(){
     X.restore();
   }
   // Letters — vowels=amber, consonants=blue; bonus letters=gold
-  G.lets.forEach(l=>{
+  // The shaft squeezes 2560 rows into ~47px, so per-letter dots there are an
+  // unreadable smear - and there are now several hundred more of them.
+  if(!G.map.secret) G.lets.forEach(l=>{
     const px=mx+l.x*CELL*sx,py=my+l.y*CELL*sy;
     X.fillStyle=l.bonus?'#ffee44':letMMColor(l.l,l.age/l.maxAge);
     const sz=3;
@@ -1817,6 +1866,7 @@ function drawMM(){
   // Timer in mini-map area
   X.fillStyle='#335533';X.font='10px Courier New';X.textAlign='right';
   X.fillText(fmtTime(G.seconds),mx+mw,my-3);
+  X.restore();
 }
 
 // ═══════════════════════════════════════════════════
@@ -1855,7 +1905,7 @@ function renderWB(){
     const p=document.createElement('span');p.className='pt';p.textContent=lp(b.l);d.appendChild(p);el.appendChild(d);
   });
   hint.textContent=bonusHint;
-  const mob=window.matchMedia('(pointer:coarse)').matches||VW<600;
+  const mob=window.matchMedia('(pointer:coarse)').matches||window.innerWidth<600;
   document.getElementById('mbtns').style.display=mob?'flex':'none';
   document.getElementById('wctrl').style.display=mob?'none':'block';
 }
