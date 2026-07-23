@@ -461,9 +461,9 @@ const SEC_GATES=(function(){
   for(let i=1;i<=n;i++){out.push({y:SEC_Y2-i*span,need:Math.round(need)});need*=1.5;}
   return out;                                    // score targets rise by 50% per sealed zone
 })();
-const SEC_GRACE=10;      // seconds before the floor starts falling
-const SEC_RISE0=0.010;   // rows per tick at the start (50% slower)
-const SEC_ACCEL=0.00045; // extra rows/tick per second survived (50% slower)
+const SEC_GRACE=120;     // 2 full minutes before the floor starts falling
+const SEC_RISE0=0.0075;  // rows per tick at the start (another 25% slower)
+const SEC_ACCEL=0.0003375;// extra rows/tick per second survived (another 25% slower)
 
 const MAPS=[
   {
@@ -1190,7 +1190,7 @@ function update(){
       if(G.bonusSpawnT%2===0) spawnLetBonus();
       if(G.bonusTimer===180) flash('⚠ 3× BONUS — 3 SECONDS LEFT!','#ffaa00');
     }
-  } else if(!G.bonusOpen){
+  } else if(!G.bonusOpen&&!G.map.secret){
     if(G.bonusCooldown>0) G.bonusCooldown--;
     G.nextPortal--;
     if(G.nextPortal<=0&&!G.portal&&G.bonusCooldown===0) spawnPortal();
@@ -1475,7 +1475,7 @@ function drawBosses(){
   });
 }
 function drawPortal(){
-  if(!G.portal)return;
+  if(!G.portal||G.map.secret)return;
   const px=G.portal.x*CELL+CELL/2,py=G.portal.y*CELL+CELL/2;
   const p=.55+.45*Math.sin(G.tick*.18);
   X.save();
@@ -1607,35 +1607,43 @@ function letBoardColor(ageRatio){
 }
 
 function drawLets(){
+  // Cull to the viewport. Previously every letter was drawn even far
+  // off-screen, and with up to 600 letters on a 2560-row map that alone
+  // caused the frame drops that read as "jitter".
+  const x0=G.camX-CELL,x1=G.camX+VW+CELL,y0=G.camY-CELL,y1=G.camY+VH+CELL;
   G.lets.forEach(l=>{
     const x=l.x*CELL+CELL/2,y=l.y*CELL+CELL/2;
+    if(x<x0||x>x1||y<y0||y>y1)return;
     const ar=l.age/l.maxAge;
     const blinkStart=l.maxAge-BLINK_S*60;
     let alpha=1;
     if(l.age<30)alpha=l.age/30;
-    else if(l.age>blinkStart&&Math.floor(G.tick/20)%2===0)alpha=.15; // slow blink ~1.5Hz
+    else if(l.age>blinkStart&&Math.floor(G.tick/20)%2===0)alpha=.15;
+    const tier=lt(l.l),tc=TC(l.l,tier);
+    const aging=letBoardColor(ar);
+    const useBg=aging?aging.bg:tc.bg;
+    const useBd=aging?aging.bd:tc.bd;
     X.save();X.globalAlpha=alpha;
-    const pulse=1+.035*Math.sin((G.tick+l.x*7+l.y*13)*.12);
-    const r=CELL*.49*pulse;
-    {
-      const tier=lt(l.l),tc=TC(l.l,tier);
-      const aging=letBoardColor(ar);
-      const useBg=aging?aging.bg:tc.bg;
-      const useBd=aging?aging.bd:tc.bd;
-      X.fillStyle='rgba(0,0,0,.72)';X.beginPath();X.arc(x,y,r+3,0,Math.PI*2);X.fill();
-      X.shadowBlur=12+4*Math.sin(G.tick*.1);X.shadowColor=ar>0.88?'#ff4400':tc.gl;
-      X.fillStyle=useBg;X.strokeStyle=useBd;X.lineWidth=2.6;
-      X.beginPath();X.arc(x,y,r,0,Math.PI*2);X.fill();X.stroke();
-      // Letter — white with dark shadow for maximum readability
-      X.shadowColor='rgba(0,0,0,0.95)';X.shadowBlur=5;X.shadowOffsetX=1;X.shadowOffsetY=1;
-      X.fillStyle='#FFFFFF';
-      X.font=`bold ${Math.floor(CELL*.78)}px Arial,sans-serif`;
-      X.textAlign='center';X.textBaseline='middle';X.strokeStyle='#050505';X.lineWidth=3.5;
-      X.strokeText(l.l,x,y+1);X.fillText(l.l,x,y+1);
-      X.shadowBlur=0;X.shadowOffsetX=0;X.shadowOffsetY=0;
-      // Point value — bright border color
-      X.fillStyle=useBd;X.font=`bold ${Math.floor(CELL*.3)}px Arial,sans-serif`;
-      X.fillText(lp(l.l),x+r*.55,y+r*.58);
+    const r=CELL*.5;
+    // Solid dark backing ring so bubbles read against any floor.
+    // No shadowBlur anywhere: it was the single most expensive thing
+    // on screen and made the whole board feel muddy.
+    X.fillStyle='rgba(0,0,0,.85)';X.beginPath();X.arc(x,y,r+2.5,0,Math.PI*2);X.fill();
+    X.fillStyle=useBg;X.beginPath();X.arc(x,y,r,0,Math.PI*2);X.fill();
+    X.strokeStyle=useBd;X.lineWidth=3;X.stroke();
+    // Letter: heavy, outlined, front and centre
+    X.font=`900 ${Math.floor(CELL*.86)}px "Arial Black",Arial,sans-serif`;
+    X.textAlign='center';X.textBaseline='middle';
+    X.lineJoin='round';X.lineWidth=4.5;X.strokeStyle='#000';
+    X.strokeText(l.l,x,y+1);
+    X.fillStyle='#fff';X.fillText(l.l,x,y+1);
+    // Point value only on letters actually worth something (declutters
+    // the board, since most tiles are 1-pointers).
+    if(lp(l.l)>=4){
+      X.lineWidth=3;X.strokeStyle='#000';
+      X.font=`900 ${Math.floor(CELL*.30)}px Arial,sans-serif`;
+      X.strokeText(lp(l.l),x+r*.62,y+r*.62);
+      X.fillStyle=useBd;X.fillText(lp(l.l),x+r*.62,y+r*.62);
     }
     X.restore();
   });
@@ -1669,96 +1677,51 @@ function drawTrain(){
 function drawRailcar(px,py,bufItem,posInCar){
   const tier=lt(bufItem.l),tc=TC(bufItem.l,tier);
   const isFront=posInCar===0,isRear=posInCar===5;
-  const isLetter=posInCar===2; // letter shown on 3rd cell (0-indexed)
+  const isLetter=posInCar===2;
   X.save();
-  // Car body — inset at ends to create gap between cars
-  const ins=isFront||isRear?5:1;
+  // Simplified car: body + outline only. The old highlight stripe, coupler
+  // bolts and per-segment wheels were tiny high-contrast details at 28px
+  // that competed with the letters instead of supporting them.
+  const ins=isFront||isRear?4:1;
   const bx=px+ins,by=py+ins,bw=CELL-ins*2,bh=CELL-ins*2;
-  // Rounded car body
   X.fillStyle=tc.bg;
   rRect(bx,by,bw,bh,3);X.fill();
-  // Bright top highlight stripe
-  X.fillStyle=tc.bd;X.globalAlpha=0.5;
-  X.fillRect(bx+2,by+2,bw-4,4);
-  X.globalAlpha=1;
-  // Car outline
   X.strokeStyle=tc.bd;X.lineWidth=isFront||isRear?2.5:1.5;
   rRect(bx,by,bw,bh,3);X.stroke();
-  // Letter on the center segment
   if(isLetter){
-    if(tier>=3){X.shadowBlur=8;X.shadowColor=tc.gl;}
-    // Dark shadow behind letter for contrast
-    X.shadowColor='rgba(0,0,0,0.9)';X.shadowBlur=5;X.shadowOffsetX=1;X.shadowOffsetY=1;
-    X.fillStyle='#FFFFFF';
-    X.font=`bold ${Math.floor(CELL*.82)}px Arial,sans-serif`;
+    // Dark plate behind the letter so it pops off the car colour
+    X.fillStyle='rgba(0,0,0,.80)';
+    rRect(px+2,py+2,CELL-4,CELL-4,4);X.fill();
+    X.strokeStyle=tc.bd;X.lineWidth=1.5;
+    rRect(px+2,py+2,CELL-4,CELL-4,4);X.stroke();
+    X.font=`900 ${Math.floor(CELL*.9)}px "Arial Black",Arial,sans-serif`;
     X.textAlign='center';X.textBaseline='middle';
-    X.fillText(bufItem.l,px+CELL/2,py+CELL/2+1);
-    X.shadowBlur=0;X.shadowOffsetX=0;X.shadowOffsetY=0;
-    // Point value — bright and visible
-    X.fillStyle=tc.bd;
-    X.font=`bold ${Math.floor(CELL*.28)}px Arial,sans-serif`;
-    X.fillText(lp(bufItem.l),px+CELL*.82,py+CELL*.8);
+    X.lineJoin='round';X.lineWidth=4.5;X.strokeStyle='#000';
+    X.strokeText(bufItem.l,px+CELL/2,py+CELL/2+1);
+    X.fillStyle='#fff';X.fillText(bufItem.l,px+CELL/2,py+CELL/2+1);
   }
-  // Coupler bolt
-  if(isFront||isRear){
-    X.fillStyle='#AAAAAA';
-    X.beginPath();X.arc(px+CELL/2,py+CELL/2,3,0,Math.PI*2);X.fill();
-  }
-  // Wheels
-  const dx=G.dir.x,dy=G.dir.y;
-  const wx=Math.abs(dy)*CELL*.32,wy=Math.abs(dx)*CELL*.32;
-  [[px+CELL/2-wx,py+CELL/2-wy],[px+CELL/2+wx,py+CELL/2+wy]].forEach(([wx2,wy2])=>{
-    X.fillStyle='#333';X.beginPath();X.arc(wx2,wy2,3,0,Math.PI*2);X.fill();
-    X.strokeStyle='#AAA';X.lineWidth=1;X.stroke();
-  });
   X.restore();
 }
 
 function drawLocomotive(px,py){
   const dx=G.dir.x,dy=G.dir.y;
   const cx=px+CELL/2,cy=py+CELL/2;
-  const fw=Math.floor(CELL*.38);
   X.save();
-  // Body glow + shadow
-  X.shadowBlur=14;X.shadowColor='#ff6600';
-  // Main boiler body — dark crimson
-  X.fillStyle='#7A1200';
-  rRect(px+1,py+1,CELL-2,CELL-2,3);X.fill();
-  // Front cab face (bright accent in movement direction)
-  X.fillStyle='#C02000';
-  if(dx===1)  X.fillRect(cx+CELL*.1,py+3,fw,CELL-6);
-  if(dx===-1) X.fillRect(px+2,py+3,fw,CELL-6);
-  if(dy===1)  X.fillRect(px+3,cy+CELL*.1,CELL-6,fw);
-  if(dy===-1) X.fillRect(px+3,py+2,CELL-6,fw);
-  // Headlight
-  X.shadowBlur=10;X.shadowColor='#ffee00';
-  X.fillStyle='#FFEE44';
-  X.beginPath();
-  X.arc(cx+dx*(CELL*.3),cy+dy*(CELL*.3),CELL*.13,0,Math.PI*2);
-  X.fill();
-  // Smokestack (offset behind headlight)
-  X.shadowBlur=0;
-  X.fillStyle='#1a1a1a';
-  X.fillRect(cx-dx*(CELL*.06)-2,cy-dy*(CELL*.06)-2,4,4);
-  // Steam puff (animated, every 8 ticks)
-  if(Math.floor(G.tick/8)%3===0){
-    X.globalAlpha=0.6;X.fillStyle='#ccddcc';
-    X.beginPath();
-    X.arc(cx-dx*(CELL*.06),cy-dy*(CELL*.06),CELL*.16,0,Math.PI*2);
-    X.fill();X.globalAlpha=1;
-  }
-  // Cab windows (perpendicular to direction)
-  X.fillStyle='#88CCFF';
-  const wox=-dy*(CELL*.2),woy=dx*(CELL*.2);
-  X.beginPath();X.arc(cx-dx*(CELL*.04)+wox,cy-dy*(CELL*.04)+woy,CELL*.1,0,Math.PI*2);X.fill();
-  X.beginPath();X.arc(cx-dx*(CELL*.04)-wox,cy-dy*(CELL*.04)-woy,CELL*.1,0,Math.PI*2);X.fill();
-  // Wheels
-  X.fillStyle='#1a0f00';
-  const wx2=Math.abs(dy)*CELL*.34, wy2=Math.abs(dx)*CELL*.34;
-  [[cx-wx2,cy-wy2],[cx+wx2,cy+wy2]].forEach(([wwx,wwy])=>{
-    X.beginPath();X.arc(wwx,wwy,3,0,Math.PI*2);X.fill();
-    X.strokeStyle='#888';X.lineWidth=1;X.stroke();
-  });
+  // Stripped back to three readable elements: body, direction face,
+  // headlight. The old version stacked a glow, smokestack, steam puff,
+  // two windows and two wheels into 28 pixels.
+  X.fillStyle='#8A1600';
+  rRect(px+1,py+1,CELL-2,CELL-2,4);X.fill();
+  X.strokeStyle='#FF6A38';X.lineWidth=2.5;
+  rRect(px+1,py+1,CELL-2,CELL-2,4);X.stroke();
+  X.fillStyle='#FF4520';
+  const fw=Math.floor(CELL*.30);
+  if(dx===1)  X.fillRect(px+CELL-2-fw,py+4,fw,CELL-8);
+  if(dx===-1) X.fillRect(px+2,py+4,fw,CELL-8);
+  if(dy===1)  X.fillRect(px+4,py+CELL-2-fw,CELL-8,fw);
+  if(dy===-1) X.fillRect(px+4,py+2,CELL-8,fw);
+  X.fillStyle='#FFF2A0';
+  X.beginPath();X.arc(cx+dx*(CELL*.30),cy+dy*(CELL*.30),CELL*.12,0,Math.PI*2);X.fill();
   X.restore();
 }
 
