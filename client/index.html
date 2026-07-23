@@ -1105,7 +1105,7 @@ function spawnLet(forceDel){
 // UPDATE
 // ═══════════════════════════════════════════════════
 const UPS=60,UPM=1000/UPS;
-let lut=0;
+let lut=0,frameAlpha=0;
 
 // Speed tiers — driven by both time (every 30s) and score
 // Returns tick interval (lower = faster). Supports fractional ticks.
@@ -1134,6 +1134,7 @@ function getSpd(){
   const slowed=base/0.75;
   return isMobile()?slowed*2.0:slowed;
 }
+function moveInterp(){return Math.min(1,(G.mtick+frameAlpha)/getSpd());}
 // Letters: +25% — starts at 160, scales to 600
 function getMaxL(){return Math.min(160+G.minutes*40+Math.floor(G.score/10),600)+(G.bonusActive?300:0);}
 // Spawn interval
@@ -1207,8 +1208,9 @@ function update(){
   G.mtick+=1;
   if(G.mtick>=getSpd()){G.mtick-=getSpd();moveSnake();}
 
-  // Camera — interpolate from the head's previous cell to its current cell for fluid motion
-  const t=Math.min(1,G.mtick/getSpd());
+  // Camera target follows the interpolated head; render() refines this on
+  // every display frame, including displays running above 60 Hz.
+  const t=moveInterp();
   const ph=G.prevSnake&&G.prevSnake[0]?G.prevSnake[0]:G.snake[0];
   const hx=(ph.x+(G.snake[0].x-ph.x)*t)*CELL+CELL/2;
   const hy=(ph.y+(G.snake[0].y-ph.y)*t)*CELL+CELL/2;
@@ -1514,6 +1516,11 @@ function render(){
   if(!G||!G.map)return;
 
   X.save();
+  // Sample between simulation ticks so the train and world glide even when
+  // the display refreshes faster than the 60 Hz game simulation.
+  const t=moveInterp(),ph=G.prevSnake?.[0]||G.snake[0],h=G.snake[0];
+  G.camX=(ph.x+(h.x-ph.x)*t)*CELL+CELL/2-VW/2;
+  G.camY=(ph.y+(h.y-ph.y)*t)*CELL+CELL/2-VH/2;
   const camCX=Math.max(0,Math.min(BW-VW,G.camX));
   const camCY=Math.max(0,Math.min(BH-VH,G.camY));
   X.translate(-camCX,-camCY);
@@ -1608,23 +1615,26 @@ function drawLets(){
     if(l.age<30)alpha=l.age/30;
     else if(l.age>blinkStart&&Math.floor(G.tick/20)%2===0)alpha=.15; // slow blink ~1.5Hz
     X.save();X.globalAlpha=alpha;
-    const r=CELL*.46;
+    const pulse=1+.035*Math.sin((G.tick+l.x*7+l.y*13)*.12);
+    const r=CELL*.49*pulse;
     {
       const tier=lt(l.l),tc=TC(l.l,tier);
       const aging=letBoardColor(ar);
       const useBg=aging?aging.bg:tc.bg;
       const useBd=aging?aging.bd:tc.bd;
-      if(tier>=3||ar>0.72){X.shadowBlur=8+4*Math.sin(G.tick*.1);X.shadowColor=ar>0.88?'#ff4400':tc.gl;}
-      X.fillStyle=useBg;X.strokeStyle=useBd;X.lineWidth=tier>=3||ar>0.72?2:1.5;
+      X.fillStyle='rgba(0,0,0,.72)';X.beginPath();X.arc(x,y,r+3,0,Math.PI*2);X.fill();
+      X.shadowBlur=12+4*Math.sin(G.tick*.1);X.shadowColor=ar>0.88?'#ff4400':tc.gl;
+      X.fillStyle=useBg;X.strokeStyle=useBd;X.lineWidth=2.6;
       X.beginPath();X.arc(x,y,r,0,Math.PI*2);X.fill();X.stroke();
       // Letter — white with dark shadow for maximum readability
-      X.shadowColor='rgba(0,0,0,0.85)';X.shadowBlur=4;X.shadowOffsetX=1;X.shadowOffsetY=1;
+      X.shadowColor='rgba(0,0,0,0.95)';X.shadowBlur=5;X.shadowOffsetX=1;X.shadowOffsetY=1;
       X.fillStyle='#FFFFFF';
-      X.font=`bold ${Math.floor(CELL*.68)}px Arial,sans-serif`;
-      X.textAlign='center';X.textBaseline='middle';X.fillText(l.l,x,y+1);
+      X.font=`bold ${Math.floor(CELL*.78)}px Arial,sans-serif`;
+      X.textAlign='center';X.textBaseline='middle';X.strokeStyle='#050505';X.lineWidth=3.5;
+      X.strokeText(l.l,x,y+1);X.fillText(l.l,x,y+1);
       X.shadowBlur=0;X.shadowOffsetX=0;X.shadowOffsetY=0;
       // Point value — bright border color
-      X.fillStyle=useBd;X.font=`bold ${Math.floor(CELL*.26)}px Arial,sans-serif`;
+      X.fillStyle=useBd;X.font=`bold ${Math.floor(CELL*.3)}px Arial,sans-serif`;
       X.fillText(lp(l.l),x+r*.55,y+r*.58);
     }
     X.restore();
@@ -1634,7 +1644,7 @@ function drawLets(){
 // ── TRAIN RENDERING ─────────────────────────────────
 function drawTrain(){
   const len=G.snake.length;
-  const t=Math.min(1,G.mtick/getSpd());
+  const t=moveInterp();
   const prev=G.prevSnake||G.snake;
   // Draw tail-to-head so locomotive renders on top
   for(let i=len-1;i>=1;i--){
@@ -1940,6 +1950,7 @@ function loop(ts){
   requestAnimationFrame(loop);
   const dt=ts-lut;
   if(dt>=UPM){lut=ts-(dt%UPM);if(cur==='game'&&G&&!G.dead)update();tickFlash();}
+  frameAlpha=Math.min(1,(ts-lut)/UPM);
   render();
 }
 requestAnimationFrame(loop);
